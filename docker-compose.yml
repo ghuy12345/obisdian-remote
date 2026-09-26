@@ -1,0 +1,26 @@
+services:
+  vault-brain:
+    build: .
+    restart: unless-stopped
+    environment:
+      - VAULT_REPO_URL=${VAULT_REPO_URL}
+      - VAULT_BRANCH=${VAULT_BRANCH:-main}
+      - SYNC_INTERVAL_SECONDS=${SYNC_INTERVAL_SECONDS:-60}
+      - GIT_AUTHOR_NAME=${GIT_AUTHOR_NAME:-Vault Brain}
+      - GIT_AUTHOR_EMAIL=${GIT_AUTHOR_EMAIL:-vault-brain@localhost}
+      - API_TOKEN=${API_TOKEN}
+      - MCP_SECRET=${MCP_SECRET}
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS:-}
+      - EMBEDDINGS_BASE_URL=${EMBEDDINGS_BASE_URL:-https://openrouter.ai/api/v1}
+      - EMBEDDINGS_API_KEY=${EMBEDDINGS_API_KEY}
+      - EMBEDDINGS_MODEL=${EMBEDDINGS_MODEL:-openai/text-embedding-3-small}
+      - WRITES_ENABLED=${WRITES_ENABLED:-true}
+      - WRITE_CREATE_DIRS=${WRITE_CREATE_DIRS:-}
+      - WRITE_APPEND_DIRS=${WRITE_APPEND_DIRS:-}
+    volumes:
+      - vault-brain-data:/data
+    expose:
+      - "8000"
+
+volumes:
+  vault-brain-data:
