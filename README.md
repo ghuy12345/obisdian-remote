@@ -58,26 +58,26 @@ Tip: point Claude's writes at an `Inbox` folder with `WRITE_CREATE_DIRS=Inbox`.
    Fine-grained tokens → only select the vault repo → Contents: *Read and write*.
 2. **New resource** in Coolify → *Docker Compose* (or *Dockerfile*) from this repo.
 3. **Environment variables** (see `.env.example`):
-   - `VAULT_REPO_URL=https://x-access-token:<token>@github.com/<owner>/<vault-repo>.git`
+   - `VAULT_REPO_URL=https://x-access-token:<token>@github.com/ghuy12345/JoshOS-Remote-Obsidian.git`
    - `API_TOKEN` → `openssl rand -hex 32`
    - `MCP_SECRET` → `openssl rand -hex 24`
-   - `ALLOWED_HOSTS=brain.yourdomain.com`
+   - `ALLOWED_HOSTS=brain.apps.sebaagency.com`
    - `EMBEDDINGS_API_KEY` → your OpenRouter key
    - `GIT_AUTHOR_EMAIL` → an email GitHub shows on the server's commits
 4. **Domain**: set it on the service, port `8000`. Coolify handles TLS.
 5. **Persistent storage**: the compose file declares a volume at `/data`
    (vault clone + index). Keep it.
-6. Deploy. `https://<domain>/health` shows `"ready": true` once the first
+6. Deploy. `https://brain.apps.sebaagency.com/health` shows `"ready": true` once the first
    index is built. A few thousand notes take well under a minute, plus the
    one-off embedding pass.
 
 ## Connect Claude
 
 **Claude Desktop / claude.ai:** Settings → Connectors → Add custom connector →
-URL `https://<domain>/<MCP_SECRET>/mcp`. The secret in the path is the
+URL `https://brain.apps.sebaagency.com/<MCP_SECRET>/mcp`. The secret in the path is the
 password, so keep that URL private.
 
-**Claude Code:** `claude mcp add --transport http vault https://<domain>/<MCP_SECRET>/mcp`
+**Claude Code:** `claude mcp add --transport http vault https://brain.apps.sebaagency.com/<MCP_SECRET>/mcp`
 
 ## REST API
 
