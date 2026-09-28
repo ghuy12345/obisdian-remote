@@ -195,3 +195,86 @@ def test_history(setup):
     brain.sync()
     h = brain.history("Hooks")
     assert [c["message"] for c in h["commits"]] == ["expand hooks", "initial vault"]
+
+
+# ---------------------------------------------------------------- edits
+AW = "Creative Strategy/Awareness Levels.md"
+
+
+def test_edit_mid_note(setup):
+    brain, laptop, _ = setup
+    r = brain.edit_note("Awareness Levels", "Lead with story, not product.",
+                        "Lead with story, not product. Problem-first hooks work best.")
+    assert r["changed"] and r["chars_removed"] == 0
+    laptop.pull()
+    text = laptop.read(AW)
+    assert "Problem-first hooks work best.\n\n## Most aware" in text
+    assert text.startswith(NOTES[AW][:40])
+
+
+def test_edit_must_match_once(setup):
+    brain, _, _ = setup
+    with pytest.raises(WriteRejected, match="not found"):
+        brain.edit_note("Hooks", "text that isn't there", "x")
+    brain.create_note("Inbox/dup.md", "same\nsame\n")
+    with pytest.raises(WriteRejected, match="2 times"):
+        brain.edit_note("dup", "same", "other")
+    brain.edit_note("dup", "same", "other", replace_all=True)
+    assert (brain.s.vault_dir / "Inbox/dup.md").read_text() == "other\nother\n"
+
+
+def test_edit_frontmatter(setup):
+    brain, laptop, _ = setup
+    brain.edit_note("Hooks", "tags: copywriting, hooks", "tags: copywriting, hooks, video")
+    assert "video" in brain.read_note("Hooks")["tags"]
+
+
+def test_section_replace_append_prepend(setup):
+    brain, laptop, _ = setup
+    brain.update_section("Awareness Levels", "Unaware", "New unaware body.")
+    brain.update_section("Awareness Levels", "## Unaware", "Appended line.", mode="append")
+    brain.update_section("Awareness Levels", "unaware", "First line.", mode="prepend")
+    laptop.pull()
+    text = laptop.read(AW)
+    assert "## Unaware\n\nFirst line.\n\nNew unaware body.\n\nAppended line.\n\n## Most aware" in text
+    assert "doesn't know they have a problem" not in text
+    assert text.endswith("[[Offer Architecture|offer]].\n")  # later section untouched
+
+
+def test_section_last_and_nested(setup):
+    brain, _, _ = setup
+    # "Awareness Levels" is the H1: its section runs to the end, including H2s.
+    brain.update_section("Awareness Levels", "Most aware", "Just the offer.")
+    text = (brain.s.vault_dir / AW).read_text()
+    assert text.endswith("## Most aware\n\nJust the offer.\n")
+    with pytest.raises(WriteRejected, match="Headings: Awareness Levels, Unaware, Most aware"):
+        brain.update_section("Awareness Levels", "Nope", "x")
+
+
+def test_edit_applies_to_latest_laptop_version(setup):
+    brain, laptop, _ = setup
+    # Laptop changes a different line; server hasn't synced. The edit must keep it.
+    laptop.write(AW, NOTES[AW].replace("Eugene Schwartz", "Eugene M. Schwartz"))
+    brain.edit_note("Awareness Levels", "Lead with story", "Open with a story")
+    laptop.pull()
+    text = laptop.read(AW)
+    assert "Eugene M. Schwartz" in text and "Open with a story" in text
+
+
+def test_edit_stale_text_fails_safely(setup):
+    brain, laptop, _ = setup
+    laptop.write(AW, NOTES[AW].replace("Lead with story, not product.", "Laptop rewrote this."))
+    with pytest.raises(WriteRejected, match="not found"):
+        brain.edit_note("Awareness Levels", "Lead with story, not product.", "Server version")
+    laptop.pull()
+    assert "Laptop rewrote this." in laptop.read(AW)
+
+
+def test_edit_delete_guard_and_toggle(setup):
+    brain, _, _ = setup
+    brain.create_note("Inbox/big.md", "x" * 6000)
+    with pytest.raises(WriteRejected, match="would remove 6000"):
+        brain.edit_note("big", "x" * 6000, "")
+    brain.s.edits_enabled = False
+    with pytest.raises(WriteRejected, match="disabled"):
+        brain.edit_note("Hooks", "Hooks", "H")

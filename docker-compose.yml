@@ -17,6 +17,9 @@ services:
       - WRITES_ENABLED=${WRITES_ENABLED:-true}
       - WRITE_CREATE_DIRS=${WRITE_CREATE_DIRS:-}
       - WRITE_APPEND_DIRS=${WRITE_APPEND_DIRS:-}
+      - WRITE_EDIT_DIRS=${WRITE_EDIT_DIRS:-}
+      - EDITS_ENABLED=${EDITS_ENABLED:-true}
+      - MAX_EDIT_DELETE_CHARS=${MAX_EDIT_DELETE_CHARS:-5000}
     volumes:
       - vault-brain-data:/data
     expose:

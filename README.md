@@ -34,7 +34,9 @@ reindex, not a migration.
 | `vault_note_history` | Git history of a note: how your thinking evolved |
 | `vault_status` | Index health |
 | `vault_create_note` | New note; fails if it exists (never overwrites) |
-| `vault_append_to_note` | Adds to the end of a note; existing text is never touched |
+| `vault_append_to_note` | Adds to the end of a note |
+| `vault_update_section` | Rewrites, or adds to the start/end of, the part under one heading |
+| `vault_edit_note` | Replaces an exact piece of text anywhere (mid-paragraph, frontmatter, ...) |
 
 Note names can be titles, aliases (`aliases:` in frontmatter) or paths.
 Link resolution matches Obsidian: path, then file name, then alias;
@@ -43,14 +45,24 @@ links all work; links inside code blocks are ignored.
 
 ## How writes stay safe with your laptop sync
 
-Every write runs inside one lock: `git pull` → write → commit → push.
-If the push is rejected because your laptop pushed in between, it rebases and
-retries. Appends only add lines at the end, so a real conflict only happens if
-you edit the very end of the same note in the same minute; then your laptop's
-version wins, the server's change is dropped, and the tool returns an error
-saying so. Nothing is ever deleted or overwritten by the server.
+Every write runs inside one lock: `git pull` → change → commit → push, so it
+always applies to the newest version your laptop pushed. If the push is
+rejected because your laptop pushed in between, it rebases and retries.
 
-Tip: point Claude's writes at an `Inbox` folder with `WRITE_CREATE_DIRS=Inbox`.
+- **Edits match exact text.** `vault_edit_note` only changes text it finds
+  exactly once in the latest version. If you've rewritten that line on the
+  laptop, the edit fails with a message instead of overwriting you.
+- **Different lines merge.** You editing one paragraph while Claude edits
+  another in the same minute is fine; git merges them.
+- **Same line, same minute:** your laptop's version wins, the server's change
+  is dropped, and the tool returns an error saying so.
+- **Everything is a commit.** Any edit can be undone from git history
+  (`vault_note_history` shows it). Notes are never deleted.
+- **Size guard.** One edit can't remove more than `MAX_EDIT_DELETE_CHARS`
+  (5000 by default).
+
+Tip: `WRITE_CREATE_DIRS=Inbox` keeps new notes in one folder; `EDITS_ENABLED=false`
+turns off in-place edits and leaves create + append.
 
 ## Deploy on Coolify
 
@@ -96,6 +108,8 @@ GET  /api/hubs   /api/clusters   /api/gaps   /api/history?name=Hooks
 GET  /api/notes?folder=Clients&tag=copywriting&sort=recent
 POST /api/notes   {"path": "Inbox/Idea.md", "content": "...", "frontmatter": {"tags": ["idea"]}}
 POST /api/append  {"note": "Men Mansion", "content": "...", "heading": "2026-09-26"}
+POST /api/edit    {"note": "Hooks", "old_text": "exact text", "new_text": "replacement"}
+POST /api/section {"note": "Hooks", "heading": "Examples", "content": "...", "mode": "replace"}
 POST /api/sync    force a pull + reindex now
 GET  /api/status
 ```
@@ -108,7 +122,9 @@ GET  /api/status
 | `EMBEDDINGS_BASE_URL` | OpenRouter | Any OpenAI-compatible `/embeddings` API |
 | `EMBEDDINGS_MODEL` | `openai/text-embedding-3-small` | Changing it re-embeds everything |
 | `WRITES_ENABLED` | true | Set false for read-only |
-| `WRITE_CREATE_DIRS` / `WRITE_APPEND_DIRS` | (anywhere) | Comma-separated folder allowlists |
+| `EDITS_ENABLED` | true | Allow in-place edits (edit_note, update_section) |
+| `WRITE_CREATE_DIRS` / `WRITE_APPEND_DIRS` / `WRITE_EDIT_DIRS` | (anywhere) | Comma-separated folder allowlists |
+| `MAX_EDIT_DELETE_CHARS` | 5000 | Largest deletion one edit may make |
 | `IGNORE_DIRS` | `.obsidian,.git,.trash,node_modules` | Hidden folders are always skipped |
 | `CHUNK_CHARS` / `CHUNK_OVERLAP` | 1500 / 200 | Semantic chunk size |
 

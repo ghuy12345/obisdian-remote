@@ -17,13 +17,19 @@ plus semantic embeddings. Start with vault_get_context for any topic: it returns
 the best-matching note plus everything connected to it in one call. Use
 vault_search when you need a list of matches, vault_read_note for full text, and
 the graph tools (backlinks, neighbors, find_path, hubs, clusters, gaps) to explore
-structure. Note names can be titles, aliases or paths. Writes are append-only:
-create new notes or append to existing ones; nothing is ever overwritten or deleted.
-Link other notes with [[Note Title]] wikilinks when writing so the graph stays connected.
+structure. Note names can be titles, aliases or paths.
+
+Writing: vault_create_note for new notes, vault_append_to_note to add to the end,
+vault_update_section to rewrite or add to the part under one heading, and
+vault_edit_note to change an exact piece of text anywhere (read the note first and
+copy the text exactly). Every write is a git commit, so any change can be undone
+from history; notes are never deleted. Link other notes with [[Note Title]]
+wikilinks when writing so the graph stays connected.
 """
 
 READ = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
+EDIT = ToolAnnotations(readOnlyHint=False, destructiveHint=True, idempotentHint=False, openWorldHint=False)
 
 Note = Annotated[str, Field(description="Note title, alias or path, e.g. 'Hook Frameworks' or 'Creative Strategy/Hooks.md'")]
 
@@ -171,5 +177,28 @@ def build_mcp(allowed_hosts: list[str]) -> FastMCP:
     ) -> dict:
         """Append to the end of an existing note. Existing content is never changed."""
         return await _run(_brain.append_to_note, note, content, heading)
+
+    @mcp.tool(annotations=EDIT)
+    async def vault_edit_note(
+        note: Note,
+        old_text: Annotated[str, Field(description="The exact text to change, copied from vault_read_note (spaces and line breaks must match). Include enough surrounding text to be unique.")],
+        new_text: Annotated[str, Field(description="What to replace it with. An empty string deletes old_text.")],
+        replace_all: Annotated[bool, Field(description="Change every occurrence instead of requiring exactly one")] = False,
+    ) -> dict:
+        """Change text anywhere in a note: fix a line, rewrite a paragraph, update frontmatter, insert
+        something mid-note (put the new text next to an existing line in new_text). Fails safely if
+        old_text isn't found exactly once, e.g. because the note changed on the laptop."""
+        return await _run(_brain.edit_note, note, old_text, new_text, replace_all)
+
+    @mcp.tool(annotations=EDIT)
+    async def vault_update_section(
+        note: Note,
+        heading: Annotated[str, Field(description="The heading text, without #, e.g. 'Next steps'")],
+        content: Annotated[str, Field(description="Markdown for the section body")],
+        mode: Annotated[Literal["replace", "append", "prepend"], Field(description="replace the body under the heading, or add to its end or start")] = "replace",
+    ) -> dict:
+        """Rewrite or add to the part of a note under one heading. Everything up to the next heading
+        of the same or higher level counts as the section; the heading line itself is kept."""
+        return await _run(_brain.update_section, note, heading, content, mode)
 
     return mcp

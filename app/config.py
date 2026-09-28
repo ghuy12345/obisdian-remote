@@ -48,6 +48,12 @@ class Settings(BaseSettings):
     write_create_dirs: str = ""
     write_append_dirs: str = ""
     max_write_chars: int = 20000
+    # In-place edits (replace text / rewrite a section). Every edit is a git commit,
+    # so anything can be restored from history.
+    edits_enabled: bool = True
+    write_edit_dirs: str = ""
+    # Safety net: refuse a single edit that deletes more than this many characters.
+    max_edit_delete_chars: int = 5000
 
     @property
     def vault_dir(self) -> Path:
@@ -72,6 +78,10 @@ class Settings(BaseSettings):
     @property
     def append_dirs(self) -> list[str]:
         return self._dirs(self.write_append_dirs)
+
+    @property
+    def edit_dirs(self) -> list[str]:
+        return self._dirs(self.write_edit_dirs)
 
     @property
     def embeddings_enabled(self) -> bool:

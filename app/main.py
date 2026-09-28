@@ -206,3 +206,27 @@ async def create_note(body: CreateNote):
 @app.post("/api/append", dependencies=api)
 async def append(body: AppendNote):
     return await run(brain.append_to_note, body.note, body.content, body.heading)
+
+
+class EditNote(BaseModel):
+    note: str
+    old_text: str
+    new_text: str
+    replace_all: bool = False
+
+
+class UpdateSection(BaseModel):
+    note: str
+    heading: str
+    content: str
+    mode: Literal["replace", "append", "prepend"] = "replace"
+
+
+@app.post("/api/edit", dependencies=api)
+async def edit(body: EditNote):
+    return await run(brain.edit_note, body.note, body.old_text, body.new_text, body.replace_all)
+
+
+@app.post("/api/section", dependencies=api)
+async def section(body: UpdateSection):
+    return await run(brain.update_section, body.note, body.heading, body.content, body.mode)

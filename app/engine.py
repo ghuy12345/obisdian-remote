@@ -8,6 +8,7 @@ import hashlib
 import logging
 import os
 import posixpath
+import re
 import threading
 import time
 from dataclasses import dataclass
@@ -35,6 +36,56 @@ class NoteNotFound(LookupError):
 
 class WriteRejected(ValueError):
     pass
+
+
+_HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
+
+
+def _norm_heading(h: str) -> str:
+    return re.sub(r"\s+", " ", h.strip().lstrip("#").strip()).lower()
+
+
+def _find_section(lines: list[str], heading: str) -> tuple[int, int]:
+    """(index of heading line, index where the section ends). Ignores headings in code blocks."""
+    want = _norm_heading(heading)
+    found: list[tuple[int, int]] = []
+    all_headings: list[str] = []
+    in_code = False
+    for i, line in enumerate(lines):
+        if line.strip().startswith(("```", "~~~")):
+            in_code = not in_code
+            continue
+        m = None if in_code else _HEADING.match(line)
+        if m:
+            all_headings.append(m.group(2))
+            if _norm_heading(m.group(2)) == want:
+                found.append((i, len(m.group(1))))
+    if not found:
+        listed = ", ".join(all_headings[:30]) or "none"
+        raise WriteRejected(f"No heading '{heading}' in this note. Headings: {listed}")
+    if len(found) > 1:
+        raise WriteRejected(f"The heading '{heading}' appears {len(found)} times; use vault_edit_note instead.")
+    start, level = found[0]
+    in_code = False
+    for j in range(start + 1, len(lines)):
+        if lines[j].strip().startswith(("```", "~~~")):
+            in_code = not in_code
+            continue
+        m = None if in_code else _HEADING.match(lines[j])
+        if m and len(m.group(1)) <= level:
+            return start, j
+    return start, len(lines)
+
+
+def _diff_size(old: str, new: str) -> tuple[int, int]:
+    """(chars removed, chars added), ignoring the shared prefix and suffix."""
+    p = 0
+    while p < min(len(old), len(new)) and old[p] == new[p]:
+        p += 1
+    s = 0
+    while s < min(len(old), len(new)) - p and old[-1 - s] == new[-1 - s]:
+        s += 1
+    return len(old) - p - s, len(new) - p - s
 
 
 @dataclass
@@ -391,7 +442,7 @@ class Brain:
         return out
 
     # =====================================================================
-    # Append-only writes
+    # Creating and appending
     # =====================================================================
     def _check_path(self, path: str, allowed: list[str]) -> str:
         p = posixpath.normpath(path.strip().lstrip("/"))
@@ -466,6 +517,93 @@ class Brain:
         return {"appended_to": rel, "title": self.graph.title(rel), "chars": len(addition), "commit": commit}
 
     # =====================================================================
+    # In-place edits
+    # =====================================================================
+    def _modify(self, name: str, change, verb: str) -> dict:
+        """Pull, apply change(current_text) -> new_text, commit, push. All inside the vault lock,
+        so the edit always applies to the latest version from the laptop."""
+        if not self.s.writes_enabled or not self.s.edits_enabled:
+            raise WriteRejected("Editing existing notes is disabled on this server (EDITS_ENABLED=false).")
+        with self.vault_lock:
+            self.repo.pull()
+            self._index_vault()
+            self._rebuild_graph()
+            rel = self._check_path(self.resolve(name), self.s.edit_dirs)
+            full = self.s.vault_dir / rel
+            current = full.read_text(encoding="utf-8", errors="replace")
+            new = change(current)
+            if new == current:
+                return {"edited": rel, "title": self.graph.title(rel), "changed": False}
+            removed, added = _diff_size(current, new)
+            if removed > self.s.max_edit_delete_chars:
+                raise WriteRejected(
+                    f"This edit would remove {removed} characters, more than the {self.s.max_edit_delete_chars} "
+                    "allowed in one edit. Make smaller edits."
+                )
+            try:
+                full.write_text(new, encoding="utf-8")
+                commit = self.repo.commit_and_push([rel], f"vault-brain: {verb} {rel}")
+            except Exception:
+                self.repo._git("checkout", "--", rel, check=False)
+                raise
+            self._after_write(rel)
+        return {"edited": rel, "title": self.graph.title(rel), "changed": True,
+                "chars_removed": removed, "chars_added": added, "commit": commit}
+
+    def edit_note(self, name: str, old_text: str, new_text: str, replace_all: bool = False) -> dict:
+        """Replace an exact piece of text. It must match exactly once unless replace_all."""
+        if not old_text:
+            raise WriteRejected("old_text is empty. Copy the exact text to change from vault_read_note.")
+        if len(new_text) > self.s.max_write_chars:
+            raise WriteRejected(f"new_text is longer than {self.s.max_write_chars} characters.")
+
+        def change(current: str) -> str:
+            n = current.count(old_text)
+            if n == 0:
+                raise WriteRejected(
+                    "old_text was not found in the note. It must match exactly, including spaces and line "
+                    "breaks. The note may also have changed on the laptop; read it again and retry."
+                )
+            if n > 1 and not replace_all:
+                raise WriteRejected(
+                    f"old_text appears {n} times. Include more surrounding text so it's unique, "
+                    "or set replace_all to change every occurrence."
+                )
+            return current.replace(old_text, new_text)
+
+        return self._modify(name, change, "edit")
+
+    def update_section(self, name: str, heading: str, content: str, mode: str = "replace") -> dict:
+        """Replace, append to, or prepend to the body under a heading. The heading line itself is kept."""
+        if mode not in ("replace", "append", "prepend"):
+            raise WriteRejected("mode must be replace, append or prepend.")
+        if mode != "replace" and not content.strip():
+            raise WriteRejected("Content is empty.")
+        if len(content) > self.s.max_write_chars:
+            raise WriteRejected(f"Content is longer than {self.s.max_write_chars} characters.")
+
+        def change(current: str) -> str:
+            lines = current.split("\n")
+            start, end = _find_section(lines, heading)
+            body = lines[start + 1 : end]
+            while body and not body[-1].strip():  # keep the blank line(s) before the next heading
+                body.pop()
+            trailing = lines[start + 1 + len(body) : end]
+            new_block = content.strip("\n").split("\n") if content.strip() else []
+            if mode == "replace":
+                body = ([""] + new_block) if new_block else []
+            elif mode == "append":
+                body = body + ([""] if body and body[-1].strip() else []) + new_block
+            else:  # prepend
+                lead = body[1:] if body and not body[0].strip() else body
+                body = [""] + new_block + ([""] + lead if lead else [])
+            if end < len(lines) and not trailing:
+                trailing = [""]
+            return "\n".join(lines[: start + 1] + body + trailing + lines[end:])
+
+        return self._modify(name, change, f"update section '{heading}' in")
+
+    # =====================================================================
     def status(self) -> dict:
         counts = self.store.counts()
         head = None
@@ -487,5 +625,6 @@ class Brain:
             "graph": {"nodes": self.graph.g.number_of_nodes(), "edges": self.graph.g.number_of_edges(),
                       "unresolved_targets": len(self.graph.unresolved)},
             "writes_enabled": self.s.writes_enabled,
+            "edits_enabled": self.s.writes_enabled and self.s.edits_enabled,
             **counts,
         }
