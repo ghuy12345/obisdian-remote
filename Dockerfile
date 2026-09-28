@@ -6,7 +6,7 @@ RUN apt-get update \
 
 WORKDIR /srv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir --retries 10 --timeout 60 --prefer-binary -r requirements.txt
 COPY app ./app
 
 ENV DATA_DIR=/data PYTHONUNBUFFERED=1
